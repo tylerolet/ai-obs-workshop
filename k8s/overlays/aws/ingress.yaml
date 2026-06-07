@@ -1,0 +1,33 @@
+---
+# ALB Ingress — exposes web-app on port 80 via an internet-facing Application Load Balancer.
+# The AWS Load Balancer Controller (installed by the deploy script) provisions the ALB.
+#
+# request-orchestrator is accessed by the Next.js server internally (pod-to-pod), not
+# via the ALB, so only web-app needs a public ingress.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: daystrom-ingress
+  namespace: daystrom-mini
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-port: "3000"
+    alb.ingress.kubernetes.io/success-codes: "200,307"
+    # Explicit subnets avoid needing kubernetes.io/role/elb tags on existing subnets.
+    # PLACEHOLDER_PUBLIC_SUBNETS is replaced by the deploy script with actual subnet IDs.
+    alb.ingress.kubernetes.io/subnets: PLACEHOLDER_PUBLIC_SUBNETS
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-app
+                port:
+                  number: 3000

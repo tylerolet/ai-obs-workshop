@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Daystrom Mini - Attach to existing VPC.
+  Use instead of 01-networking.yaml when you cannot create a new VPC.
+  Creates ONLY new resources (NAT GW, dedicated EKS private subnets, route table,
+  security groups) inside the existing VPC. Does NOT modify any existing subnets,
+  route tables, or security groups belonging to other workloads.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: daystrom-mini
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC ID
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing public subnet in AZ1 (NAT gateway placed here, ALB uses both)
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing public subnet in AZ2 (ALB uses both)
+  EKSPrivateCidr1:
+    Type: String
+    Default: 10.0.32.0/20
+    Description: CIDR for new EKS private subnet in AZ1 — must not overlap existing subnets
+  EKSPrivateCidr2:
+    Type: String
+    Default: 10.0.48.0/20
+    Description: CIDR for new EKS private subnet in AZ2 — must not overlap existing subnets
+
+Resources:
+
+  # ── NAT Gateway (placed in existing public subnet AZ1) ────────────────────
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-nat-eip
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-nat
+
+  # ── New EKS-dedicated private subnets ─────────────────────────────────────
+  # These are brand-new subnets in unused CIDR ranges.
+  # The creator's existing private subnets are never touched.
+  EKSPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref EKSPrivateCidr1
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-eks-private-1
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  EKSPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcId
+      CidrBlock: !Ref EKSPrivateCidr2
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-eks-private-2
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: shared
+
+  # ── New route table — only associated with our new EKS subnets ───────────
+  # The creator's existing route tables are never modified.
+  EKSPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-eks-private-rt
+
+  EKSPrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref EKSPrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  EKSPrivateSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref EKSPrivateSubnet1
+      RouteTableId: !Ref EKSPrivateRouteTable
+
+  EKSPrivateSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref EKSPrivateSubnet2
+      RouteTableId: !Ref EKSPrivateRouteTable
+
+  # ── Security groups (cluster-specific, created fresh) ────────────────────
+  EKSClusterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} EKS control plane
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-cluster-sg
+
+  EKSNodeSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} EKS worker nodes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          SourceSecurityGroupId: !Ref EKSClusterSG
+          Description: Allow all from control plane
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-node-sg
+
+  NodeToNodeIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EKSNodeSG
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EKSNodeSG
+      Description: Allow all node-to-node traffic
+
+  ALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} ALB - HTTP from internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-alb-sg
+
+  RDSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} RDS PostgreSQL - EKS nodes only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EKSNodeSG
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-rds-sg
+
+  ElastiCacheSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} ElastiCache Redis - EKS nodes only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref EKSNodeSG
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-redis-sg
+
+  EFSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${ClusterName} EFS - NFS from EKS nodes only
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref EKSNodeSG
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-efs-sg
+
+# Outputs mirror 01-networking.yaml exactly so all downstream stacks are unchanged.
+Outputs:
+  VpcId:
+    Value: !Ref VpcId
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+
+  PublicSubnet1:
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnet1
+
+  PublicSubnet2:
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicSubnet2
+
+  # PrivateSubnet1/2 point to our NEW EKS-dedicated subnets, not the creator's.
+  PrivateSubnet1:
+    Value: !Ref EKSPrivateSubnet1
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnet1
+
+  PrivateSubnet2:
+    Value: !Ref EKSPrivateSubnet2
+    Export:
+      Name: !Sub ${AWS::StackName}-PrivateSubnet2
+
+  EKSClusterSG:
+    Value: !Ref EKSClusterSG
+    Export:
+      Name: !Sub ${AWS::StackName}-EKSClusterSG
+
+  EKSNodeSG:
+    Value: !Ref EKSNodeSG
+    Export:
+      Name: !Sub ${AWS::StackName}-EKSNodeSG
+
+  ALBSG:
+    Value: !Ref ALBSG
+    Export:
+      Name: !Sub ${AWS::StackName}-ALBSG
+
+  RDSSG:
+    Value: !Ref RDSSG
+    Export:
+      Name: !Sub ${AWS::StackName}-RDSSG
+
+  ElastiCacheSG:
+    Value: !Ref ElastiCacheSG
+    Export:
+      Name: !Sub ${AWS::StackName}-ElastiCacheSG
+
+  EFSSG:
+    Value: !Ref EFSSG
+    Export:
+      Name: !Sub ${AWS::StackName}-EFSSG

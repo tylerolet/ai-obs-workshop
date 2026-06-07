@@ -1,0 +1,30 @@
+---
+# StorageClass backed by EFS CSI driver.
+# PLACEHOLDER_EFS_ID is replaced by the deploy script with the actual EFS filesystem ID
+# from the CloudFormation 03-data stack output.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-sc
+provisioner: efs.csi.aws.com
+parameters:
+  provisioningMode: efs-ap
+  fileSystemId: PLACEHOLDER_EFS_ID
+  directoryPerms: "755"
+  uid: "1000"
+  gid: "1000"
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llama-model-pvc
+  namespace: daystrom-mini
+spec:
+  accessModes:
+    - ReadWriteMany   # EFS supports RWX — safe even if llama-cpp scales out
+  storageClassName: efs-sc
+  resources:
+    requests:
+      storage: 2Gi

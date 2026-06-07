@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Daystrom Mini - EKS Cluster, Node Group, OIDC, EFS CSI
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: daystrom-mini
+  NetworkingStack:
+    Type: String
+    Default: daystrom-mini-networking
+  KubernetesVersion:
+    Type: String
+    Default: '1.31'
+  NodeInstanceType:
+    Type: String
+    Default: m5.xlarge
+    AllowedValues:
+      - m5.large      # 2 vCPU / 8GB  — tight on memory, llama slower
+      - m5.xlarge     # 4 vCPU / 16GB — recommended for workshop
+      - m5.2xlarge    # 8 vCPU / 32GB — for heavy concurrent use
+  NodeDesiredSize:
+    Type: Number
+    Default: 2
+  NodeMinSize:
+    Type: Number
+    Default: 1
+  NodeMaxSize:
+    Type: Number
+    Default: 3
+
+Resources:
+
+  # ── EKS Cluster IAM Role ──────────────────────────────────────────────────
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-cluster-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  # ── EKS Cluster ───────────────────────────────────────────────────────────
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - Fn::ImportValue: !Sub ${NetworkingStack}-EKSClusterSG
+        SubnetIds:
+          - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet1
+          - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet2
+          - Fn::ImportValue: !Sub ${NetworkingStack}-PublicSubnet1
+          - Fn::ImportValue: !Sub ${NetworkingStack}-PublicSubnet2
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+      Logging:
+        ClusterLogging:
+          EnabledTypes:
+            - Type: api
+            - Type: audit
+            - Type: authenticator
+
+  # ── Node IAM Role ─────────────────────────────────────────────────────────
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-node-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # ── Managed Node Group ────────────────────────────────────────────────────
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      NodegroupName: !Sub ${ClusterName}-nodes
+      NodeRole: !GetAtt NodeRole.Arn
+      Subnets:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet1
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet2
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      ScalingConfig:
+        MinSize: !Ref NodeMinSize
+        MaxSize: !Ref NodeMaxSize
+        DesiredSize: !Ref NodeDesiredSize
+      DiskSize: 50
+      AmiType: AL2_x86_64
+      Tags:
+        Environment: workshop
+
+  # ── Core EKS Add-ons ─────────────────────────────────────────────────────
+  VPCCNIAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: vpc-cni
+
+  KubeProxyAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: kube-proxy
+
+  CoreDNSAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: NodeGroup
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: coredns
+
+  # ── OIDC Provider (required for IRSA) ─────────────────────────────────────
+  # Thumbprints: Starfield root CAs used by EKS OIDC endpoints.
+  # If IRSA trust fails after deploy, re-fetch with:
+  #   openssl s_client -connect <oidc-host>:443 2>/dev/null | openssl x509 -fingerprint -noout -sha1
+  OIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
+        - 06b25927c42a721631c1efd9431e648fa62e1e39
+
+  # ── EFS CSI IAM Role (IRSA) ───────────────────────────────────────────────
+  EFSCSIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-efs-csi-role
+      # IAM trust policy is a JSON string so Fn::Sub can interpolate dynamic OIDC keys.
+      # CloudFormation YAML doesn't support !Sub as a map key, so JSON string is required.
+      AssumeRolePolicyDocument: !Sub
+        - |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Federated": "${OIDCProviderArn}"},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringLike": {
+                  "${OIDCUrl}:sub": "system:serviceaccount:kube-system:efs-csi-*"
+                }
+              }
+            }]
+          }
+        - OIDCUrl: !Select [1, !Split ['https://', !GetAtt EKSCluster.OpenIdConnectIssuerUrl]]
+          OIDCProviderArn: !Ref OIDCProvider
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEFSCSIDriverPolicy
+
+  # ── EFS CSI Driver Add-on ─────────────────────────────────────────────────
+  EFSCSIAddon:
+    Type: AWS::EKS::Addon
+    DependsOn: NodeGroup
+    Properties:
+      ClusterName: !Ref ClusterName
+      AddonName: aws-efs-csi-driver
+      ServiceAccountRoleArn: !GetAtt EFSCSIRole.Arn
+
+  # ── ALB Controller IAM Role (IRSA) ────────────────────────────────────────
+  # The permissions policy is created by the deploy script (downloads from
+  # kubernetes-sigs/aws-load-balancer-controller) to stay version-accurate.
+  ALBControllerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ClusterName}-alb-controller-role
+      AssumeRolePolicyDocument: !Sub
+        - |
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Federated": "${OIDCProviderArn}"},
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "${OIDCUrl}:sub": "system:serviceaccount:kube-system:aws-load-balancer-controller",
+                  "${OIDCUrl}:aud": "sts.amazonaws.com"
+                }
+              }
+            }]
+          }
+        - OIDCUrl: !Select [1, !Split ['https://', !GetAtt EKSCluster.OpenIdConnectIssuerUrl]]
+          OIDCProviderArn: !Ref OIDCProvider
+
+Outputs:
+  ClusterName:
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-ClusterName
+
+  ClusterEndpoint:
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-ClusterEndpoint
+
+  OIDCProviderArn:
+    Value: !Ref OIDCProvider
+    Export:
+      Name: !Sub ${AWS::StackName}-OIDCProviderArn
+
+  OIDCProviderUrl:
+    Value: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+    Export:
+      Name: !Sub ${AWS::StackName}-OIDCProviderUrl
+
+  NodeRoleArn:
+    Value: !GetAtt NodeRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-NodeRoleArn
+
+  ALBControllerRoleArn:
+    Value: !GetAtt ALBControllerRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ALBControllerRoleArn

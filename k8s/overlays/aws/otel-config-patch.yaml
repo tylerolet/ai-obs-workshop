@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-config
+  namespace: daystrom-mini
+data:
+  OTEL_RESOURCE_ATTRIBUTES: "service.namespace=daystrom-mini,deployment.environment=aws"

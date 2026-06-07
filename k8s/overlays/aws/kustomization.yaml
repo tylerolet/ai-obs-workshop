@@ -1,0 +1,69 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Pull in everything from base, then apply AWS-specific patches below.
+resources:
+  - ../../base
+  - efs-storage.yaml
+  - ingress.yaml
+
+# Override labels for AWS environment
+labels:
+  - pairs:
+      app.kubernetes.io/managed-by: workshop
+      deployment.environment: aws
+    includeSelectors: false
+
+# Remap in-cluster images → ECR.
+# The deploy script runs `kustomize edit set image` to inject actual ECR URIs.
+images:
+  - name: daystrom-mini/web-app
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/web-app
+    newTag: latest
+  - name: daystrom-mini/request-orchestrator
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/request-orchestrator
+    newTag: latest
+  - name: daystrom-mini/prompt-cache
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/prompt-cache
+    newTag: latest
+  - name: daystrom-mini/model-router
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/model-router
+    newTag: latest
+  - name: daystrom-mini/safety-gateway
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/safety-gateway
+    newTag: latest
+  - name: daystrom-mini/mock-server
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/mock-server
+    newTag: latest
+  - name: daystrom-mini/inference-pool
+    newName: PLACEHOLDER_REGISTRY/daystrom-mini/inference-pool
+    newTag: latest
+
+patches:
+  # ── Update Redis + Postgres endpoints to AWS managed services ─────────────
+  - path: app-config-patch.yaml
+    target:
+      kind: ConfigMap
+      name: app-config
+
+  # ── Update OTel resource attributes for AWS environment ───────────────────
+  - path: otel-config-patch.yaml
+    target:
+      kind: ConfigMap
+      name: otel-config
+
+  # ── Scale down in-cluster Redis + Postgres (replaced by managed services) ─
+  - path: disable-in-cluster-data.yaml
+    target:
+      kind: Deployment
+      name: redis
+  - path: disable-in-cluster-data.yaml
+    target:
+      kind: Deployment
+      name: postgres
+
+  # ── llama-cpp: replace emptyDir with EFS-backed PVC ──────────────────────
+  - path: llama-cpp-patch.yaml
+    target:
+      kind: Deployment
+      name: llama-cpp

@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Daystrom Mini - ElastiCache Redis, RDS PostgreSQL (pgvector), EFS model storage
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: daystrom-mini
+  NetworkingStack:
+    Type: String
+    Default: daystrom-mini-networking
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for RDS (also stored in Secrets Manager by stack 05)
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    AllowedValues:
+      - db.t3.micro    # 2 vCPU / 1GB  — too small, provided for reference
+      - db.t3.medium   # 2 vCPU / 4GB  — workshop default
+      - db.t3.large    # 2 vCPU / 8GB  — for heavier workloads
+  RedisNodeType:
+    Type: String
+    Default: cache.t3.micro
+
+Resources:
+
+  # ── RDS ───────────────────────────────────────────────────────────────────
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub ${ClusterName} RDS subnet group
+      SubnetIds:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet1
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-db-subnet-group
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: !Sub ${ClusterName} - pgvector support
+      Parameters:
+        # pg_stat_statements loaded; pgvector is built-in on PG16 RDS
+        shared_preload_libraries: pg_stat_statements
+
+  PostgresDB:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub ${ClusterName}-postgres
+      DBName: daystrom
+      Engine: postgres
+      EngineVersion: '16.3'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: '20'
+      StorageType: gp3
+      MasterUsername: daystrom
+      MasterUserPassword: !Ref DBPassword
+      DBParameterGroupName: !Ref DBParameterGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-RDSSG
+      MultiAZ: false
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+      StorageEncrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-postgres
+
+  # ── ElastiCache Redis ─────────────────────────────────────────────────────
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub ${ClusterName} Redis subnet group
+      SubnetIds:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet1
+        - Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet2
+
+  RedisCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: !Sub ${ClusterName} prompt-cache Redis
+      ReplicationGroupId: !Sub ${ClusterName}-redis
+      AutomaticFailoverEnabled: false
+      NumCacheClusters: 1
+      CacheNodeType: !Ref RedisNodeType
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-ElastiCacheSG
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-redis
+
+  # ── EFS — llama.cpp model storage ────────────────────────────────────────
+  # Model (~400 MB) is downloaded once on first pod start and reused on
+  # subsequent starts. Without EFS, every pod restart re-downloads from HF.
+  ModelEFS:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      Encrypted: true
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-model-storage
+
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelEFS
+      SubnetId:
+        Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet1
+      SecurityGroups:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-EFSSG
+
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref ModelEFS
+      SubnetId:
+        Fn::ImportValue: !Sub ${NetworkingStack}-PrivateSubnet2
+      SecurityGroups:
+        - Fn::ImportValue: !Sub ${NetworkingStack}-EFSSG
+
+  ModelAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref ModelEFS
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /models
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${ClusterName}-model-ap
+
+Outputs:
+  PostgresEndpoint:
+    Value: !GetAtt PostgresDB.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-PostgresEndpoint
+
+  PostgresPort:
+    Value: !GetAtt PostgresDB.Endpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-PostgresPort
+
+  RedisEndpoint:
+    Value: !GetAtt RedisCluster.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-RedisEndpoint
+
+  RedisPort:
+    Value: !GetAtt RedisCluster.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-RedisPort
+
+  EFSFileSystemId:
+    Value: !Ref ModelEFS
+    Export:
+      Name: !Sub ${AWS::StackName}-EFSFileSystemId
+
+  EFSAccessPointId:
+    Value: !GetAtt ModelAccessPoint.AccessPointId
+    Export:
+      Name: !Sub ${AWS::StackName}-EFSAccessPointId

@@ -1,0 +1,7 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: placeholder   # target name is set per-resource in kustomization.yaml patches
+  namespace: daystrom-mini
+spec:
+  replicas: 0

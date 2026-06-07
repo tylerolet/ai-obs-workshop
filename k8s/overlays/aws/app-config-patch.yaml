@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: daystrom-mini
+data:
+  # These values are replaced by the deploy script using envsubst before apply.
+  # Source: CloudFormation 03-data stack outputs RedisEndpoint and PostgresEndpoint.
+  REDIS_HOST: "PLACEHOLDER_REDIS_HOST"
+  REDIS_PORT: "6379"
+  POSTGRES_HOST: "PLACEHOLDER_POSTGRES_HOST"
+  POSTGRES_PORT: "5432"

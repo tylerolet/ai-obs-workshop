@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Daystrom Mini - ECR repositories (one per custom service)
+
+# llama-cpp uses the public ghcr.io/ggml-org/llama.cpp:server image, no ECR repo needed.
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: daystrom-mini
+
+Resources:
+
+  WebAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/web-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  RequestOrchestratorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/request-orchestrator
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  PromptCacheRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/prompt-cache
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ModelRouterRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/model-router
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  SafetyGatewayRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/safety-gateway
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  MockServerRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/mock-server
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  InferencePoolRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${ClusterName}/inference-pool
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: >
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+Outputs:
+  RegistryUrl:
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+    Export:
+      Name: !Sub ${AWS::StackName}-RegistryUrl
+
+  WebAppRepoUri:
+    Value: !GetAtt WebAppRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-WebAppRepoUri
+
+  RequestOrchestratorRepoUri:
+    Value: !GetAtt RequestOrchestratorRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-RequestOrchestratorRepoUri
+
+  PromptCacheRepoUri:
+    Value: !GetAtt PromptCacheRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-PromptCacheRepoUri
+
+  ModelRouterRepoUri:
+    Value: !GetAtt ModelRouterRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-ModelRouterRepoUri
+
+  SafetyGatewayRepoUri:
+    Value: !GetAtt SafetyGatewayRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-SafetyGatewayRepoUri
+
+  MockServerRepoUri:
+    Value: !GetAtt MockServerRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-MockServerRepoUri
+
+  InferencePoolRepoUri:
+    Value: !GetAtt InferencePoolRepo.RepositoryUri
+    Export:
+      Name: !Sub ${AWS::StackName}-InferencePoolRepoUri
