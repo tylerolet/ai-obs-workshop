@@ -54,7 +54,7 @@ Resources:
       DBInstanceIdentifier: !Sub ${ClusterName}-postgres
       DBName: daystrom
       Engine: postgres
-      EngineVersion: '16.3'
+      EngineVersion: '16'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: '20'
       StorageType: gp3
