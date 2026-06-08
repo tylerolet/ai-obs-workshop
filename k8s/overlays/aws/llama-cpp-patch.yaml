@@ -22,6 +22,7 @@ spec:
                 echo "Model found on EFS, skipping download."
               fi
       volumes:
+        - $patch: replace
         - name: model-storage
           persistentVolumeClaim:
             claimName: llama-model-pvc
