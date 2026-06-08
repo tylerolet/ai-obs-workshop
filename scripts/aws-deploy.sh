@@ -59,6 +59,9 @@ EXISTING_PUBLIC_SUBNET_1="${EXISTING_PUBLIC_SUBNET_1:-}"
 EXISTING_PUBLIC_SUBNET_2="${EXISTING_PUBLIC_SUBNET_2:-}"
 # Note: private subnets are created by 00-existing-vpc.yaml, not passed as env vars
 
+# ECR repo names must be all-lowercase — derive from CLUSTER_NAME
+ECR_PREFIX=$(echo "$CLUSTER_NAME" | tr '[:upper:]' '[:lower:]')
+
 STACK_NET="${CLUSTER_NAME}-networking"
 STACK_EKS="${CLUSTER_NAME}-eks"
 STACK_DATA="${CLUSTER_NAME}-data"
@@ -170,7 +173,7 @@ aws cloudformation deploy \
   --region "$AWS_REGION" \
   --stack-name "$STACK_ECR" \
   --template-file "$CFN_DIR/04-ecr.yaml" \
-  --parameter-overrides ClusterName="$CLUSTER_NAME" &
+  --parameter-overrides ClusterName="$CLUSTER_NAME" ECRPrefix="$ECR_PREFIX" &
 ECR_PID=$!
 
 wait $DATA_PID && success "Data stack ready" || die "Data stack failed"
@@ -256,7 +259,10 @@ sed -i.bak \
   "$K8S_OVERLAY/app-config-patch.yaml"
 
 # ECR image URIs into kustomization.yaml
-sed -i.bak "s|PLACEHOLDER_REGISTRY|${REGISTRY_URL}|g" "$K8S_OVERLAY/kustomization.yaml"
+sed -i.bak \
+  -e "s|PLACEHOLDER_REGISTRY|${REGISTRY_URL}|g" \
+  -e "s|PLACEHOLDER_ECR_PREFIX|${ECR_PREFIX}|g" \
+  "$K8S_OVERLAY/kustomization.yaml"
 
 # Public subnet IDs into Ingress (avoids needing to tag existing subnets)
 sed -i.bak "s|PLACEHOLDER_PUBLIC_SUBNETS|${PUBLIC_SUBNET_1},${PUBLIC_SUBNET_2}|g" \
@@ -269,7 +275,7 @@ aws ecr get-login-password --region "$AWS_REGION" \
 
 build_and_push() {
   local svc_name=$1 context_path=$2 image_name=$3
-  local uri="${REGISTRY_URL}/${CLUSTER_NAME}/${image_name}:latest"
+  local uri="${REGISTRY_URL}/${ECR_PREFIX}/${image_name}:latest"
   info "Building $svc_name..."
   docker build --platform linux/amd64 -t "$uri" "$REPO_ROOT/$context_path"
   info "Pushing $svc_name..."

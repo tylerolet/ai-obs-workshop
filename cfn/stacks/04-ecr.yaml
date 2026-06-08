@@ -7,13 +7,17 @@ Parameters:
   ClusterName:
     Type: String
     Default: daystrom-mini
+  ECRPrefix:
+    Type: String
+    Default: daystrom-mini
+    Description: Lowercase prefix for ECR repo names (ECR requires all-lowercase). Derived from ClusterName by the deploy script.
 
 Resources:
 
   WebAppRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/web-app
+      RepositoryName: !Sub ${ECRPrefix}/web-app
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -25,7 +29,7 @@ Resources:
   RequestOrchestratorRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/request-orchestrator
+      RepositoryName: !Sub ${ECRPrefix}/request-orchestrator
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -37,7 +41,7 @@ Resources:
   PromptCacheRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/prompt-cache
+      RepositoryName: !Sub ${ECRPrefix}/prompt-cache
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -49,7 +53,7 @@ Resources:
   ModelRouterRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/model-router
+      RepositoryName: !Sub ${ECRPrefix}/model-router
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -61,7 +65,7 @@ Resources:
   SafetyGatewayRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/safety-gateway
+      RepositoryName: !Sub ${ECRPrefix}/safety-gateway
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -73,7 +77,7 @@ Resources:
   MockServerRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/mock-server
+      RepositoryName: !Sub ${ECRPrefix}/mock-server
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -85,7 +89,7 @@ Resources:
   InferencePoolRepo:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub ${ClusterName}/inference-pool
+      RepositoryName: !Sub ${ECRPrefix}/inference-pool
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:

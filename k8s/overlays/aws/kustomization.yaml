@@ -18,25 +18,25 @@ labels:
 # The deploy script runs `kustomize edit set image` to inject actual ECR URIs.
 images:
   - name: daystrom-mini/web-app
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/web-app
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/web-app
     newTag: latest
   - name: daystrom-mini/request-orchestrator
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/request-orchestrator
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/request-orchestrator
     newTag: latest
   - name: daystrom-mini/prompt-cache
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/prompt-cache
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/prompt-cache
     newTag: latest
   - name: daystrom-mini/model-router
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/model-router
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/model-router
     newTag: latest
   - name: daystrom-mini/safety-gateway
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/safety-gateway
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/safety-gateway
     newTag: latest
   - name: daystrom-mini/mock-server
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/mock-server
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/mock-server
     newTag: latest
   - name: daystrom-mini/inference-pool
-    newName: PLACEHOLDER_REGISTRY/daystrom-mini/inference-pool
+    newName: PLACEHOLDER_REGISTRY/PLACEHOLDER_ECR_PREFIX/inference-pool
     newTag: latest
 
 patches:
