@@ -9,6 +9,7 @@ Exposes a streaming gRPC endpoint that:
 import os
 import json
 import time
+import random
 import logging
 from concurrent import futures
 
@@ -32,6 +33,12 @@ INFERENCE_POOL_ADDR = os.environ.get("INFERENCE_POOL_ADDR", "inference-pool:8081
 OTEL_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
 SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "model-router")
 STREAM_RESPONSES = os.environ.get("STREAM_RESPONSES", "true").lower() == "true"
+
+# --- Problem injection knobs (set via chaos-config ConfigMap) ---
+# Adds artificial delay before inference begins (simulates GPU throttling / model overload)
+INJECT_LATENCY_MS = int(os.environ.get("INJECT_LATENCY_MS", "0"))
+# Fraction of requests [0.0–1.0] that fail with an internal error
+ERROR_RATE = float(os.environ.get("ERROR_RATE", "0.0"))
 
 # Pool configuration (single pool in codespace mode)
 POOL_CONFIG = {
@@ -68,6 +75,19 @@ class ModelRouterServicer(model_router_pb2_grpc.ModelRouterServiceServicer):
 
             pool = list(POOL_CONFIG.values())[0]
             span.set_attribute("model_router.pool_selected", pool["name"])
+
+            # Problem scenario: random error injection
+            if ERROR_RATE > 0.0 and random.random() < ERROR_RATE:
+                span.set_attribute("model_router.error_injected", True)
+                logger.warning("Error injection triggered (rate=%.2f)", ERROR_RATE)
+                context.abort(grpc.StatusCode.INTERNAL, "inference backend unavailable (injected)")
+                return
+
+            # Problem scenario: artificial latency before inference (simulates model overload)
+            if INJECT_LATENCY_MS > 0:
+                span.set_attribute("model_router.injected_latency_ms", INJECT_LATENCY_MS)
+                logger.warning("Latency injection: sleeping %dms before inference", INJECT_LATENCY_MS)
+                time.sleep(INJECT_LATENCY_MS / 1000.0)
 
             logger.info(
                 "Routing request model=%s tenant=%s → pool=%s",

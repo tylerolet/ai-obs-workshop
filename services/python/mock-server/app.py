@@ -15,6 +15,9 @@ from socketserver import ThreadingMixIn
 PORT = int(os.environ.get("PORT", "8000"))
 MOCK_ROLE = os.environ.get("MOCK_ROLE", "vllm")
 
+# Problem injection: slow safety model responses to exhaust safety-gateway thread pool
+SAFETY_LATENCY_MS = int(os.environ.get("SAFETY_LATENCY_MS", "0"))
+
 SAFETY_RESPONSE = "safe"
 INFERENCE_RESPONSE = (
     "I'm a local development mock. In production, this response would come "
@@ -45,6 +48,9 @@ class MockHandler(BaseHTTPRequestHandler):
             is_safety = "llama-guard" in model.lower() or MOCK_ROLE == "safety-model"
 
             if is_safety:
+                if SAFETY_LATENCY_MS > 0:
+                    # Problem scenario: slow safety model — saturates safety-gateway thread pool
+                    time.sleep(SAFETY_LATENCY_MS / 1000.0)
                 reply = SAFETY_RESPONSE
                 completion_tokens = 1
             else:

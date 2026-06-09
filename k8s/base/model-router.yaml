@@ -26,6 +26,8 @@ spec:
                 name: app-config
             - configMapRef:
                 name: otel-config
+            - configMapRef:
+                name: chaos-config
           env:
             - name: OTEL_SERVICE_NAME
               value: "model-router"

@@ -27,6 +27,29 @@ data:
   INFERENCE_POOL_URL: "http://inference-pool.daystrom-mini.svc.cluster.local:8081"
   LLAMA_CPP_URL: "http://llama-cpp.daystrom-mini.svc.cluster.local:8080"
 ---
+# Problem injection knobs — edit values to activate a scenario, then kubectl apply.
+# All patterns are off by default (0 / 0.0).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chaos-config
+  namespace: daystrom-mini
+data:
+  # Scenario 1 — Inference latency spike (model-router)
+  # Adds this many milliseconds of delay before each inference request reaches the model.
+  # Simulates GPU throttling or model overload. Try: 3000
+  INJECT_LATENCY_MS: "0"
+
+  # Scenario 2 — Failed requests (model-router)
+  # Fraction [0.0–1.0] of inference requests that return an internal error.
+  # Simulates intermittent model backend failures. Try: 0.3
+  ERROR_RATE: "0.0"
+
+  # Scenario 3 — Safety model slowdown / thread pool exhaustion (mock-safety)
+  # Adds this many milliseconds to every safety classification call.
+  # With >10 concurrent requests, safety-gateway's gRPC thread pool saturates → queue buildup. Try: 4000
+  SAFETY_LATENCY_MS: "0"
+---
 apiVersion: v1
 kind: Secret
 metadata:

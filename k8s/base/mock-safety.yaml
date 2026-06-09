@@ -23,6 +23,9 @@ spec:
           image: daystrom-mini/mock-server:latest
           ports:
             - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: chaos-config
           env:
             - name: PORT
               value: "8000"

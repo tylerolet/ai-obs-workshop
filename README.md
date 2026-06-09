@@ -130,6 +130,16 @@ All spans are exported to your Dynatrace environment via the OTel Collector.
 - Produces coherent but simple responses
 - Good enough for demonstrating observability patterns
 
+## Dynatrace for AI Skills
+
+The **[Dynatrace for AI](https://github.com/Dynatrace/dynatrace-for-ai)** skill library is included in this repository as a git submodule under `dynatrace-skills/`. It provides Claude Code skills for AI observability — DQL queries, dashboard templates, problem analysis, and tracing workflows purpose-built for AI/LLM systems.
+
+After cloning, initialize the submodule:
+
+```bash
+git submodule update --init --recursive
+```
+
 ## Observability Scenarios
 
 The architecture supports injecting observability-relevant bugs:
