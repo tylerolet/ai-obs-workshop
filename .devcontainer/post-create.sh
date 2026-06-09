@@ -3,6 +3,21 @@ set -euo pipefail
 
 echo "=== AI Observability Workshop Setup ==="
 
+# ─── Initialize git submodules ───────────────────────────────────────
+echo "Initializing git submodules (dtctl, dynatrace-skills)..."
+git submodule update --init --recursive
+
+# ─── Install dtctl ───────────────────────────────────────────────────
+echo "Installing dtctl..."
+export DTCTL_INSTALL_DIR="/usr/local/bin"
+sh dtctl/install.sh
+
+# ─── Install dynatrace-skills (symlink for agent access) ────────────
+echo "Setting up dynatrace-skills..."
+if [ -d "dynatrace-skills/skills" ]; then
+  echo "  dynatrace-skills submodule ready."
+fi
+
 # Install k3d
 echo "Installing k3d..."
 curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
