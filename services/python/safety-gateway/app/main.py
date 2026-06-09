@@ -10,12 +10,14 @@ import logging
 from concurrent import futures
 
 import grpc
-import httpx
+import openai
+
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.grpc import GrpcInstrumentorServer
+from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 from opentelemetry.sdk.resources import Resource
 
 import safety_pb2
@@ -37,13 +39,17 @@ def setup_telemetry():
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     GrpcInstrumentorServer().instrument()
+    OpenAIInstrumentor().instrument()
 
 
 class SafetyServicer(safety_pb2_grpc.SafetyServiceServicer):
 
     def __init__(self):
         self.tracer = trace.get_tracer(__name__)
-        self.http_client = httpx.Client(timeout=30.0)
+        self.openai_client = openai.OpenAI(
+            base_url=f"{SAFETY_MODEL_URL}/v1",
+            api_key="not-needed",
+        )
 
     def Classify(self, request, context):
         with self.tracer.start_as_current_span("safety.classify") as span:
@@ -53,22 +59,13 @@ class SafetyServicer(safety_pb2_grpc.SafetyServiceServicer):
 
             start = time.time()
 
-            # Call safety model (mock in codespace, Llama-Guard in production)
-            payload = {
-                "model": "llama-guard",
-                "messages": [{"role": "user", "content": request.text}],
-                "max_tokens": 10,
-            }
-
             try:
-                response = self.http_client.post(
-                    f"{SAFETY_MODEL_URL}/v1/chat/completions",
-                    json=payload,
+                response = self.openai_client.chat.completions.create(
+                    model="llama-guard",
+                    messages=[{"role": "user", "content": request.text}],
+                    max_tokens=10,
                 )
-                response.raise_for_status()
-                data = response.json()
-
-                content = data["choices"][0]["message"]["content"].strip().lower()
+                content = response.choices[0].message.content.strip().lower()
                 is_safe = "unsafe" not in content
 
                 latency_ms = int((time.time() - start) * 1000)

@@ -7,19 +7,19 @@ Exposes a streaming gRPC endpoint that:
 """
 
 import os
-import json
 import time
 import random
 import logging
 from concurrent import futures
 
 import grpc
-import httpx
+import openai
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.grpc import GrpcInstrumentorServer
+from opentelemetry.instrumentation.openai import OpenAIInstrumentor
 from opentelemetry.sdk.resources import Resource
 
 import model_router_pb2
@@ -59,13 +59,18 @@ def setup_telemetry():
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     GrpcInstrumentorServer().instrument()
+    OpenAIInstrumentor().instrument()
 
 
 class ModelRouterServicer(model_router_pb2_grpc.ModelRouterServiceServicer):
 
     def __init__(self):
         self.tracer = trace.get_tracer(__name__)
-        self.http_client = httpx.Client(timeout=120.0)
+        pool = list(POOL_CONFIG.values())[0]
+        self.openai_client = openai.OpenAI(
+            base_url=f"{pool['endpoint']}/v1",
+            api_key="not-needed",
+        )
 
     def RouteInference(self, request, context):
         with self.tracer.start_as_current_span("model_router.route") as span:
@@ -94,66 +99,42 @@ class ModelRouterServicer(model_router_pb2_grpc.ModelRouterServiceServicer):
                 request.model_id, request.tenant_id, pool["name"]
             )
 
-            # Build OpenAI-compatible request
-            payload = {
-                "model": pool["model"],
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant. Always respond in English."},
-                    {"role": "user", "content": request.prompt},
-                ],
-                "max_tokens": request.max_tokens or 256,
-                "temperature": request.temperature or 0.7,
-                "stream": STREAM_RESPONSES,
-            }
-
-            endpoint = f"{pool['endpoint']}/v1/chat/completions"
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant. Always respond in English."},
+                {"role": "user", "content": request.prompt},
+            ]
             start = time.time()
 
             try:
                 if STREAM_RESPONSES:
-                    # Stream from inference pool
-                    with self.http_client.stream("POST", endpoint, json=payload) as response:
-                        if response.status_code >= 400:
-                            error_body = response.read().decode("utf-8", errors="replace")
-                            logger.error("Inference pool returned %d: %s", response.status_code, error_body)
-                            context.abort(grpc.StatusCode.INTERNAL, f"Inference failed: {response.status_code}: {error_body[:200]}")
-                            return
-                        buffer = ""
-                        for chunk in response.iter_text():
-                            buffer += chunk
-                            # Parse SSE lines
-                            while "\n" in buffer:
-                                line, buffer = buffer.split("\n", 1)
-                                line = line.strip()
-                                if line.startswith("data: ") and line != "data: [DONE]":
-                                    try:
-                                        data = json.loads(line[6:])
-                                        delta = data.get("choices", [{}])[0].get("delta", {})
-                                        content = delta.get("content", "")
-                                        if content:
-                                            yield model_router_pb2.RouteInferenceResponse(
-                                                text=content,
-                                                pool_name=pool["name"],
-                                            )
-                                    except json.JSONDecodeError:
-                                        pass
+                    stream = self.openai_client.chat.completions.create(
+                        model=pool["model"],
+                        messages=messages,
+                        max_tokens=request.max_tokens or 256,
+                        temperature=request.temperature or 0.7,
+                        stream=True,
+                    )
+                    for chunk in stream:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            yield model_router_pb2.RouteInferenceResponse(
+                                text=content,
+                                pool_name=pool["name"],
+                            )
                 else:
-                    # Non-streaming: single response
-                    response = self.http_client.post(endpoint, json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-
-                    content = data["choices"][0]["message"]["content"]
-                    usage = data.get("usage", {})
-                    latency_ms = int((time.time() - start) * 1000)
-
-                    span.set_attribute("gen_ai.response.model", data.get("model", ""))
-                    span.set_attribute("gen_ai.usage.completion_tokens", usage.get("completion_tokens", 0))
-                    span.set_attribute("gen_ai.usage.prompt_tokens", usage.get("prompt_tokens", 0))
+                    response = self.openai_client.chat.completions.create(
+                        model=pool["model"],
+                        messages=messages,
+                        max_tokens=request.max_tokens or 256,
+                        temperature=request.temperature or 0.7,
+                        stream=False,
+                    )
+                    content = response.choices[0].message.content
+                    usage = response.usage
 
                     yield model_router_pb2.RouteInferenceResponse(
                         text=content,
-                        tokens_generated=usage.get("completion_tokens", 0),
+                        tokens_generated=usage.completion_tokens if usage else 0,
                         pool_name=pool["name"],
                         finish_reason="stop",
                     )
