@@ -1,3 +1,6 @@
 [submodule "dynatrace-skills"]
 	path = dynatrace-skills
 	url = https://github.com/Dynatrace/dynatrace-for-ai.git
+[submodule "dtctl"]
+	path = dtctl
+	url = https://github.com/dynatrace-oss/dtctl
